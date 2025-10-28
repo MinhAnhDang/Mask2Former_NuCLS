@@ -9,6 +9,7 @@ try:
     from shapely.errors import ShapelyDeprecationWarning
     import warnings
     warnings.filterwarnings('ignore', category=ShapelyDeprecationWarning)
+    warnings.filterwarnings('ignore',category=FutureWarning)
 except:
     pass
 
