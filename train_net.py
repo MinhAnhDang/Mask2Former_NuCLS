@@ -338,4 +338,5 @@ if __name__ == "__main__":
     # first_batch = next(iter(dataloader))
     # first_input = first_batch[-1]["instances"]
     # print("Masks", first_input.gt_masks)
+    # print(first_input)
     # print(first_batch)

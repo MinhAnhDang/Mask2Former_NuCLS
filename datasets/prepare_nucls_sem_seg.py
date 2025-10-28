@@ -35,7 +35,7 @@ def process_mask_to_match_image_size(mask, image_shape):
             mask = mask[:image_shape[0], :]
         return mask
     
-task = 'training' # 'training' or 'validation'
+task = 'validation' # 'training' or 'validation'
 data_dir = 'NuCLS'
 training_image_dir = f'{data_dir}/rgb/{task}'
 training_gt_mask_dir = f'{data_dir}/mask'
@@ -53,7 +53,7 @@ print(f'Number of masks: {len(mask_files)}')
 #Process and save masks
 num_processed = 0
 for file in image_files:
-    file = 'TCGA-GM-A2DH-DX1_id-5ea40adcddda5f83989951a2_left-55826_top-58087_bottom-58368_right-56099.png'
+    # file = 'TCGA-GM-A2DH-DX1_id-5ea40adcddda5f83989951a2_left-55826_top-58087_bottom-58368_right-56099.png'
     img_path = os.path.join(training_image_dir, file)
     img = Image.open(img_path)
     img_array = np.array(img)
@@ -69,15 +69,16 @@ for file in image_files:
     print("Processed mask shape:", processed_mask.shape)
     for raw_value, super_value in raw_to_super_codemap.items():
         processed_mask[mask_array[:,:,0] == raw_value] = super_value #objects classes
-        processed_mask[mask_array[:,:,0] == 99] = 0 # change unlabel to 0
-        processed_mask[mask_array[:,:,0] == 253] = 0 #background
+        
+    processed_mask[processed_mask == 99] = 0 # change unlabel to 0
+    processed_mask[processed_mask == 253] = 0 #background
     #Verify processed mask size matches image size
     if processed_mask.shape != img_array.shape[:2]:
         print(f'Size mismatch for {file}: image size {img_array.shape[:2]}, mask size {processed_mask.shape}')
         processed_mask = cv2.resize(processed_mask, (img_array.shape[1], img_array.shape[0]), interpolation = cv2.INTER_NEAREST)
         print(f'After processing, mask size: {processed_mask.shape}')
     print(f'Unique values in processed_mask for {file}: {np.unique(processed_mask)}')
-    processed_mask = processed_mask -1 # 0 (ignore) become 255, others are shifted by 1. Mean all raw classes 0,99,253 is now become 255
+    processed_mask = processed_mask - 1 # 0 (ignore) become 255, others are shifted by 1. Mean all raw classes 0,99,253 is now become 255
     print(f'Unique values in processed_mask for {file} after shifted: {np.unique(processed_mask)}')
 
     # Save processed mask
