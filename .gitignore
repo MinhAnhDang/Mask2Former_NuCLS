@@ -17,9 +17,9 @@ _ext
 *.pyd
 *.so
 *.dll
-# *.egg-info/
-# build/
-# dist/
+*.egg-info/
+build/
+dist/
 wheels/
 
 # pytorch/python/numpy formats
