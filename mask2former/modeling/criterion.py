@@ -342,7 +342,8 @@ class FixedSetCriterion(SetCriterion):
         #TODO use valid to mask invalid areas due to padding in loss
         target_masks, valid = nested_tensor_from_tensor_list(masks).decompose()
         target_masks = target_masks.to(src_masks) #B,C,H,W
-        target_masks = target_masks.unsqueeze(2).repeat(1,1,num_masks_per_class,1,1).reshape(2,-1, 256,256)
+        B,_,_,_ = target_masks.shape
+        target_masks = target_masks.unsqueeze(2).repeat(1,1,num_masks_per_class,1,1).reshape(B,-1, 256,256)
         target_masks = target_masks[tgt_idx]
         
         # No need to upsample predictions as we are using normalized coordinates :)
@@ -371,6 +372,7 @@ class FixedSetCriterion(SetCriterion):
             align_corners=False,
         ).squeeze(1)
 
+        num_masks = num_masks * num_masks_per_class
         losses = {
             "loss_mask": sigmoid_ce_loss_jit(point_logits, point_labels, num_masks) if not self.focal else sigmoid_focal_loss_jit(point_logits, point_labels, num_masks),
             "loss_dice": dice_loss_jit(point_logits, point_labels, num_masks),
