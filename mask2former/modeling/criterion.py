@@ -17,6 +17,44 @@ from detectron2.projects.point_rend.point_features import (
 
 from ..utils.misc import is_dist_avail_and_initialized, nested_tensor_from_tensor_list
 
+def focal_loss(inputs, targets, alpha=10, gamma=2, reduction='mean', ignore_index=255):
+    ce_loss = F.cross_entropy(inputs, targets, reduction='none', ignore_index=ignore_index)
+    pt = torch.exp(-ce_loss)
+    f_loss = alpha * (1-pt)**gamma * ce_loss
+    if reduction == 'mean':
+        f_loss = f_loss.mean()
+    return f_loss
+
+def sigmoid_focal_loss(inputs, targets, num_masks, alpha: float = 0.25, gamma: float = 2):
+    """
+    Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example.
+        targets: A float tensor with the same shape as inputs. Stores the binary
+                 classification label for each element in inputs
+                (0 for the negative class and 1 for the positive class).
+        alpha: (optional) Weighting factor in range (0,1) to balance
+                positive vs negative examples. Default = -1 (no weighting).
+        gamma: Exponent of the modulating factor (1 - p_t) to
+               balance easy vs hard examples.
+    Returns:
+        Loss tensor
+    """
+    prob = inputs.sigmoid()
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+    p_t = prob * targets + (1 - prob) * (1 - targets)
+    loss = ce_loss * ((1 - p_t) ** gamma)
+
+    if alpha >= 0:
+        alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+        loss = alpha_t * loss
+
+    return loss.mean(1).sum() / num_masks
+
+sigmoid_focal_loss_jit = torch.jit.script(
+    sigmoid_focal_loss
+)# type: torch.jit.ScriptModule
 
 def dice_loss(
         inputs: torch.Tensor,
@@ -95,7 +133,7 @@ class SetCriterion(nn.Module):
     """
 
     def __init__(self, num_classes, matcher, weight_dict, eos_coef, losses,
-                 num_points, oversample_ratio, importance_sample_ratio):
+                 num_points, oversample_ratio, importance_sample_ratio, focal=True, focal_gamma=2, focal_alpha=10):
         """Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -118,7 +156,10 @@ class SetCriterion(nn.Module):
         self.num_points = num_points
         self.oversample_ratio = oversample_ratio
         self.importance_sample_ratio = importance_sample_ratio
-
+        self.focal = focal
+        self.focal_gamma = focal_gamma
+        self.focal_alpha = focal_alpha
+        
     def loss_labels(self, outputs, targets, indices, num_masks):
         """Classification loss (NLL)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
@@ -132,8 +173,10 @@ class SetCriterion(nn.Module):
             src_logits.shape[:2], self.num_classes, dtype=torch.int64, device=src_logits.device
         )
         target_classes[idx] = target_classes_o
-
-        loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight)
+        if self.focal:
+            loss_ce = focal_loss(src_logits.transpose(1,2), target_classes, gamma=self.focal_gamma, alpha=self.focal_alpha)
+        else:
+            loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight)
         losses = {"loss_ce": loss_ce}
         return losses
     
@@ -181,7 +224,7 @@ class SetCriterion(nn.Module):
         ).squeeze(1)
 
         losses = {
-            "loss_mask": sigmoid_ce_loss_jit(point_logits, point_labels, num_masks),
+            "loss_mask": sigmoid_ce_loss_jit(point_logits, point_labels, num_masks) if not self.focal else sigmoid_focal_loss_jit(point_logits, point_labels, num_masks),
             "loss_dice": dice_loss_jit(point_logits, point_labels, num_masks),
         }
 
@@ -261,3 +304,103 @@ class SetCriterion(nn.Module):
         _repr_indent = 4
         lines = [head] + [" " * _repr_indent + line for line in body]
         return "\n".join(lines)
+
+
+class FixedSetCriterion(SetCriterion):
+        
+    def loss_labels(self, outputs, targets, indices, num_masks):
+        """Classification loss (NLL)
+        targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
+        """
+        assert "pred_logits" in outputs
+        src_logits = outputs['pred_logits']
+        num_masks_per_class = int(src_logits.shape[1]/self.num_classes) 
+        src_idx = self._get_src_permutation_idx(indices,num_masks_per_class)
+        target_classes_o = torch.cat([t['labels'] for t in targets]).unsqueeze(1).repeat(1, num_masks_per_class).reshape(-1)
+        target_classes = torch.full(src_logits.shape[:2], self.num_classes, dtype=torch.int64, device=src_logits.device)
+        target_classes[src_idx] = target_classes_o
+        
+        if self.focal:
+            loss_ce = focal_loss(src_logits.transpose(1,2), target_classes, gamma=self.focal_gamma, alpha=self.focal_alpha)
+        else:
+            loss_ce = F.cross_entropy(src_logits.transpose(1,2), target_classes, self.empty_weight)
+        losses = {"loss_ce": loss_ce}
+        return losses
+    
+    def loss_masks(self, outputs, targets, indices, num_masks):
+        """Compute the losses related to the masks: the focal loss and the dice loss.
+        targets dicts must contain the key "masks" containing a tensor of dim [nb_target_boxes, h, w]
+        """
+        assert "pred_masks" in outputs
+        src_masks = outputs['pred_masks']
+        num_masks_per_class = int(src_masks.shape[1]/self.num_classes)
+        src_idx = self._get_src_permutation_idx(indices,num_masks_per_class)
+        tgt_idx = self._get_tgt_permutation_idx(indices,num_masks_per_class)        
+        src_masks = src_masks[src_idx] # BXN, H, W
+        
+        masks = [t['masks'] for t in targets]
+        #TODO use valid to mask invalid areas due to padding in loss
+        target_masks, valid = nested_tensor_from_tensor_list(masks).decompose()
+        target_masks = target_masks.to(src_masks) #B,C,H,W
+        target_masks = target_masks.unsqueeze(2).repeat(1,1,num_masks_per_class,1,1).reshape(2,-1, 256,256)
+        target_masks = target_masks[tgt_idx]
+        
+        # No need to upsample predictions as we are using normalized coordinates :)
+        # N x 1 x H x W
+        src_masks = src_masks[:, None]
+        target_masks = target_masks[:, None]
+        with torch.no_grad():
+            # sample point_coords
+            point_coords = get_uncertain_point_coords_with_randomness(
+                src_masks,
+                lambda logits: calculate_uncertainty(logits),
+                self.num_points,
+                self.oversample_ratio,
+                self.importance_sample_ratio,
+            )
+            # get gt labels
+            point_labels = point_sample(
+                target_masks,
+                point_coords,
+                align_corners=False,
+            ).squeeze(1)
+
+        point_logits = point_sample(
+            src_masks,
+            point_coords,
+            align_corners=False,
+        ).squeeze(1)
+
+        losses = {
+            "loss_mask": sigmoid_ce_loss_jit(point_logits, point_labels, num_masks) if not self.focal else sigmoid_focal_loss_jit(point_logits, point_labels, num_masks),
+            "loss_dice": dice_loss_jit(point_logits, point_labels, num_masks),
+        }
+
+        del src_masks
+        del target_masks
+        return losses
+        
+        
+    def _get_src_permutation_idx(self, indices, num_masks_per_class):
+        batch_idx = torch.cat([torch.full_like(src, i) for i, (src,_) in enumerate(indices)])
+        batch_idx = batch_idx.unsqueeze(1).repeat(1,num_masks_per_class).reshape(-1)
+        src_idx = torch.cat([src for (src,_) in indices])
+        src_idx = src_idx.unsqueeze(1).repeat(1, num_masks_per_class)*num_masks_per_class + torch.arange(num_masks_per_class).to(src_idx.device)
+        src_idx = src_idx.reshape(-1)
+        return batch_idx, src_idx
+    
+    def _get_tgt_permutation_idx(self, indices, num_masks_per_class):
+        batch_idx = torch.cat([torch.full_like(src, i) for i, (src,_) in enumerate(indices)])
+        batch_idx = batch_idx.unsqueeze(1).repeat(1,num_masks_per_class).reshape(-1)
+        tgt_idx = torch.cat([tgt for (_, tgt) in indices])
+        tgt_idx = tgt_idx.unsqueeze(1).repeat(1, num_masks_per_class)*num_masks_per_class + torch.arange(num_masks_per_class).to(tgt_idx.device)
+        tgt_idx = tgt_idx.reshape(-1)
+        return batch_idx, tgt_idx
+    
+    def __repr__(self):
+        return super().__repr__()
+    
+    
+        
+
+    

@@ -337,6 +337,8 @@ if __name__ == "__main__":
     # model = Trainer.build_model(cfg)
     # dataloader = Trainer.build_train_loader(cfg)
     # first_batch = next(iter(dataloader))
+    # out_put = model(first_batch)
+    # print("Output of model: ", out_put)
     # first_input = first_batch[-1]["instances"]
     # print("Masks", first_input.gt_masks)
     # print(first_input)

@@ -13,8 +13,8 @@ from detectron2.modeling.postprocessing import sem_seg_postprocess
 from detectron2.structures import Boxes, ImageList, Instances, BitMasks
 from detectron2.utils.memory import retry_if_cuda_oom
 
-from .modeling.criterion import SetCriterion
-from .modeling.matcher import HungarianMatcher
+from .modeling.criterion import SetCriterion, FixedSetCriterion
+from .modeling.matcher import HungarianMatcher,FixedMatcher
 
 
 @META_ARCH_REGISTRY.register()
@@ -108,12 +108,21 @@ class MaskFormer(nn.Module):
         mask_weight = cfg.MODEL.MASK_FORMER.MASK_WEIGHT
 
         # building criterion
-        matcher = HungarianMatcher(
-            cost_class=class_weight,
-            cost_mask=mask_weight,
-            cost_dice=dice_weight,
-            num_points=cfg.MODEL.MASK_FORMER.TRAIN_NUM_POINTS,
-        )
+        fixedmatch = cfg.MODEL.MASK_FORMER.FIXEDMATCH
+        if not fixedmatch:
+            matcher = HungarianMatcher(
+                cost_class=class_weight,
+                cost_mask=mask_weight,
+                cost_dice=dice_weight,
+                num_points=cfg.MODEL.MASK_FORMER.TRAIN_NUM_POINTS,
+            )
+        else:
+            matcher = FixedMatcher(
+                cost_class=class_weight,
+                cost_mask=mask_weight,
+                cost_dice=dice_weight,
+                num_points=cfg.MODEL.MASK_FORMER.TRAIN_NUM_POINTS,
+            )
 
         weight_dict = {"loss_ce": class_weight, "loss_mask": mask_weight, "loss_dice": dice_weight}
 
@@ -126,16 +135,34 @@ class MaskFormer(nn.Module):
 
         losses = ["labels", "masks"]
 
-        criterion = SetCriterion(
-            sem_seg_head.num_classes,
-            matcher=matcher,
-            weight_dict=weight_dict,
-            eos_coef=no_object_weight,
-            losses=losses,
-            num_points=cfg.MODEL.MASK_FORMER.TRAIN_NUM_POINTS,
-            oversample_ratio=cfg.MODEL.MASK_FORMER.OVERSAMPLE_RATIO,
-            importance_sample_ratio=cfg.MODEL.MASK_FORMER.IMPORTANCE_SAMPLE_RATIO,
-        )
+        if not fixedmatch:
+            criterion = SetCriterion(
+                sem_seg_head.num_classes,
+                matcher=matcher,
+                weight_dict=weight_dict,
+                eos_coef=no_object_weight,
+                losses=losses,
+                num_points=cfg.MODEL.MASK_FORMER.TRAIN_NUM_POINTS,
+                oversample_ratio=cfg.MODEL.MASK_FORMER.OVERSAMPLE_RATIO,
+                importance_sample_ratio=cfg.MODEL.MASK_FORMER.IMPORTANCE_SAMPLE_RATIO,
+                focal=cfg.MODEL.MASK_FORMER.FOCAL, 
+                focal_alpha=cfg.MODEL.MASK_FORMER.FOCAL_ALPHA,
+                focal_gamma=cfg.MODEL.MASK_FORMER.FOCAL_GAMMA,
+            )
+        else:
+            criterion = FixedSetCriterion(
+                sem_seg_head.num_classes,
+                matcher=matcher,
+                weight_dict=weight_dict,
+                eos_coef=no_object_weight,
+                losses=losses,
+                num_points=cfg.MODEL.MASK_FORMER.TRAIN_NUM_POINTS,
+                oversample_ratio=cfg.MODEL.MASK_FORMER.OVERSAMPLE_RATIO,
+                importance_sample_ratio=cfg.MODEL.MASK_FORMER.IMPORTANCE_SAMPLE_RATIO,
+                focal=cfg.MODEL.MASK_FORMER.FOCAL, 
+                focal_alpha=cfg.MODEL.MASK_FORMER.FOCAL_ALPHA,
+                focal_gamma=cfg.MODEL.MASK_FORMER.FOCAL_GAMMA,
+            )
 
         return {
             "backbone": backbone,

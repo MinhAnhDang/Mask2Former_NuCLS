@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 from torch import nn
 from torch.cuda.amp import autocast
+import numpy as np
 
 from detectron2.projects.point_rend.point_features import point_sample
 
@@ -186,4 +187,43 @@ class HungarianMatcher(nn.Module):
             "cost_dice: {}".format(self.cost_dice),
         ]
         lines = [head] + [" " * _repr_indent + line for line in body]
+        return "\n".join(lines)
+
+
+class FixedMatcher(HungarianMatcher):
+    def __init__(self, cost_class: float = 1, cost_mask: float = 1, cost_dice: float = 1, num_points: int = 0):
+        super().__init__(cost_class, cost_mask, cost_dice, num_points)
+    
+    @torch.no_grad()
+    def forward(self, outputs, targets):
+        """Performs the matching
+
+        Params:
+            outputs: This is a dict that contains at least these entries:
+                 "pred_logits": Tensor of dim [batch_size, num_queries, num_classes] with the classification logits
+                 "pred_masks": Tensor of dim [batch_size, num_queries, H_pred, W_pred] with the predicted masks
+
+            targets: This is a list of targets (len(targets) = batch_size), where each target is a dict containing:
+                 "labels": Tensor of dim [num_target_boxes] (where num_target_boxes is the number of ground-truth
+                           objects in the target) containing the class labels
+                 "masks": Tensor of dim [num_target_boxes, H_gt, W_gt] containing the target masks
+
+        Returns:
+            A list of size batch_size, containing tuples of (index_i, index_j) where:
+                - index_i is the indices of the selected predictions (in order)
+                - index_j is the indices of the corresponding selected targets (in order)
+            For each batch element, it holds:
+                len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
+        """
+        labels = [t['labels'] for t in targets]
+        indices = [(label, range(len(label))) for label in labels]
+        
+        return [
+            (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
+            for i, j in indices
+        ]
+    
+    def __repr__(self, _repr_indent=4):
+        head = "Matcher " + self.__class__.__name__
+        lines = [head]
         return "\n".join(lines)
