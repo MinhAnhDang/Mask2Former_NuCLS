@@ -25,7 +25,7 @@ def focal_loss(inputs, targets, alpha=10, gamma=2, reduction='mean', ignore_inde
         f_loss = f_loss.mean()
     return f_loss
 
-def sigmoid_focal_loss(inputs, targets, num_masks, alpha: float = 0.25, gamma: float = 2):
+def sigmoid_focal_loss(inputs: torch.Tensor, targets: torch.Tensor, num_masks: float, alpha: float = 0.25, gamma: float = 2):
     """
     Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
     Args:
