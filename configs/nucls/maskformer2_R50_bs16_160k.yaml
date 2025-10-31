@@ -18,10 +18,15 @@ MODEL:
   MASK_FORMER:
     TRANSFORMER_DECODER_NAME: "MultiScaleMaskedTransformerDecoder" #StandardTransformerDecoder MultiScaleMaskedTransformerDecoder
     TRANSFORMER_IN_FEATURE: "multi_scale_pixel_decoder"
-    FIXEDMATCH: False
+    FIXEDMATCH: True
     FOCAL: True
     FOCAL_ALPHA: 5.
     FOCAL_GAMMA: 1.
+    UNCERTAIN: True
+    THRESHOLD_UC: 0.5
+    THETA: 10e-7
+    LOW_BOUND: 0.5
+    HIGH_BOUND: 1.5
     DEEP_SUPERVISION: True
     NO_OBJECT_WEIGHT: 0.1
     CLASS_WEIGHT: 2.0

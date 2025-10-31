@@ -13,7 +13,7 @@ from detectron2.modeling.postprocessing import sem_seg_postprocess
 from detectron2.structures import Boxes, ImageList, Instances, BitMasks
 from detectron2.utils.memory import retry_if_cuda_oom
 
-from .modeling.criterion import SetCriterion, FixedSetCriterion
+from .modeling.criterion import SetCriterion, FixedSetCriterion, SetCriterionWithUncertain
 from .modeling.matcher import HungarianMatcher,FixedMatcher
 
 
@@ -109,6 +109,7 @@ class MaskFormer(nn.Module):
 
         # building criterion
         fixedmatch = cfg.MODEL.MASK_FORMER.FIXEDMATCH
+        uncertain = cfg.MODEL.MASK_FORMER.UNCERTAIN
         if not fixedmatch:
             matcher = HungarianMatcher(
                 cost_class=class_weight,
@@ -150,19 +151,38 @@ class MaskFormer(nn.Module):
                 focal_gamma=cfg.MODEL.MASK_FORMER.FOCAL_GAMMA,
             )
         else:
-            criterion = FixedSetCriterion(
-                sem_seg_head.num_classes,
-                matcher=matcher,
-                weight_dict=weight_dict,
-                eos_coef=no_object_weight,
-                losses=losses,
-                num_points=cfg.MODEL.MASK_FORMER.TRAIN_NUM_POINTS,
-                oversample_ratio=cfg.MODEL.MASK_FORMER.OVERSAMPLE_RATIO,
-                importance_sample_ratio=cfg.MODEL.MASK_FORMER.IMPORTANCE_SAMPLE_RATIO,
-                focal=cfg.MODEL.MASK_FORMER.FOCAL, 
-                focal_alpha=cfg.MODEL.MASK_FORMER.FOCAL_ALPHA,
-                focal_gamma=cfg.MODEL.MASK_FORMER.FOCAL_GAMMA,
-            )
+            if not uncertain:
+                criterion = FixedSetCriterion(
+                    sem_seg_head.num_classes,
+                    matcher=matcher,
+                    weight_dict=weight_dict,
+                    eos_coef=no_object_weight,
+                    losses=losses,
+                    num_points=cfg.MODEL.MASK_FORMER.TRAIN_NUM_POINTS,
+                    oversample_ratio=cfg.MODEL.MASK_FORMER.OVERSAMPLE_RATIO,
+                    importance_sample_ratio=cfg.MODEL.MASK_FORMER.IMPORTANCE_SAMPLE_RATIO,
+                    focal=cfg.MODEL.MASK_FORMER.FOCAL, 
+                    focal_alpha=cfg.MODEL.MASK_FORMER.FOCAL_ALPHA,
+                    focal_gamma=cfg.MODEL.MASK_FORMER.FOCAL_GAMMA,
+                )
+            else:
+                criterion = SetCriterionWithUncertain(
+                    sem_seg_head.num_classes,
+                    matcher=matcher,
+                    weight_dict=weight_dict,
+                    eos_coef=no_object_weight,
+                    losses=losses,
+                    num_points=cfg.MODEL.MASK_FORMER.TRAIN_NUM_POINTS,
+                    oversample_ratio=cfg.MODEL.MASK_FORMER.OVERSAMPLE_RATIO,
+                    importance_sample_ratio=cfg.MODEL.MASK_FORMER.IMPORTANCE_SAMPLE_RATIO,
+                    focal=cfg.MODEL.MASK_FORMER.FOCAL, 
+                    focal_alpha=cfg.MODEL.MASK_FORMER.FOCAL_ALPHA,
+                    focal_gamma=cfg.MODEL.MASK_FORMER.FOCAL_GAMMA,
+                    theta=cfg.MODEL.MASK_FORMER.THETA,
+                    threshold_uc=cfg.MODEL.MASK_FORMER.THRESHOLD_UC,
+                    low_bound=cfg.MODEL.MASK_FORMER.LOW_BOUND,
+                    high_bound=cfg.MODEL.MASK_FORMER.HIGH_BOUND,
+                )
 
         return {
             "backbone": backbone,
@@ -300,6 +320,9 @@ class MaskFormer(nn.Module):
                 {
                     "labels": targets_per_image.gt_classes,
                     "masks": padded_masks,
+                    "mean_intensity_images": targets_per_image.mean_intensity_images,
+                    "classes_intensity": targets_per_image.classes_intensity,
+                    "background_intensity": targets_per_image.background_intensity
                 }
             )
         return new_targets

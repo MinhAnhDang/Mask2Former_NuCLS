@@ -339,7 +339,11 @@ if __name__ == "__main__":
     # first_batch = next(iter(dataloader))
     # out_put = model(first_batch)
     # print("Output of model: ", out_put)
-    # first_input = first_batch[-1]["instances"]
-    # print("Masks", first_input.gt_masks)
+    # first_input = first_batch[-1]
+    # print("Masks", first_input['instances'].gt_masks.shape)
+    # print("image:", first_input['image'].shape)
+    # print("mean intensity: ", first_input['instances'].mean_intensity_images.shape)
+    # print("Classes intensity: ", first_input['instances'].classes_intensity.shape)
+    # print("Background intensity: ", first_input['instances'].background_intensity.shape)
     # print(first_input)
     # print(first_batch)

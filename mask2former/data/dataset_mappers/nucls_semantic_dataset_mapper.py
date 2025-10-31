@@ -155,6 +155,9 @@ class NuCLSSemSegDatasetMapper:
         if "annotations" in dataset_dict:
             raise ValueError("Semantic Segmentation dataset should not have instance annotations")
         
+        #Calculate image_mean_intensity
+        mean_intensity_image = torch.mean(image, dim=0, dtype=float).numpy()
+        
         #Prepare per-category binary masks
         if sem_seg_gt is not None:
             sem_seg_gt = sem_seg_gt.numpy()
@@ -165,17 +168,29 @@ class NuCLSSemSegDatasetMapper:
             instances.gt_classes = torch.tensor(classes, dtype=torch.int64)
             
             masks = []
+            classes_intensity = []
             for c in classes:
                 masks.append(sem_seg_gt == c)
+                intensity = np.mean(mean_intensity_image[sem_seg_gt==c], dtype=float)
+                classes_intensity.append(intensity)
+            
+            #background intensity
+            background_intensity = np.mean(mean_intensity_image[sem_seg_gt==self.ignore_label], dtype=float)
                 
             if len(masks) == 0:
                 # Some image does not have annotation (all ignored)
                 instances.gt_masks = torch.zeros((0, sem_seg_gt.shape[-2], sem_seg_gt.shape[-1]))
+                instances.mean_intensity_image = torch.zeros((0, sem_seg_gt.shape[-2], sem_seg_gt.shape[-1]))
+                
             else:
                 masks = BitMasks(
                     torch.stack([torch.from_numpy(np.ascontiguousarray(x.copy())) for x in masks])
                 )
+                mean_intensity_images = torch.stack([torch.from_numpy(np.ascontiguousarray(mean_intensity_image.copy())) for _ in range(len(masks))])
+                classes_intensity = torch.stack([torch.as_tensor(x)for x in classes_intensity])
                 instances.gt_masks = masks.tensor
-                
+                instances.classes_intensity = classes_intensity
+                instances.mean_intensity_images = mean_intensity_images
+                instances.background_intensity = torch.stack([torch.as_tensor(background_intensity) for _ in range(len(masks))])
             dataset_dict["instances"] = instances
         return dataset_dict

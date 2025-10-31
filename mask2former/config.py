@@ -42,6 +42,13 @@ def add_maskformer2_config(cfg):
     cfg.MODEL.MASK_FORMER.FOCAL = False
     cfg.MODEL.MASK_FORMER.FOCAL_ALPHA = 5.
     cfg.MODEL.MASK_FORMER.FOCAL_GAMMA = 1.
+    
+    # uncertain
+    cfg.MODEL.MASK_FORMER.UNCERTAIN = True
+    cfg.MODEL.MASK_FORMER.THRESHOLD_UC = 0.5
+    cfg.MODEL.MASK_FORMER.THETA = 10e-7
+    cfg.MODEL.MASK_FORMER.LOW_BOUND = 0.5
+    cfg.MODEL.MASK_FORMER.HIGH_BOUND=1.5
 
     # transformer config
     cfg.MODEL.MASK_FORMER.NHEADS = 8
