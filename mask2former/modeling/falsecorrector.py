@@ -12,7 +12,7 @@ def calculate_average_mask(src_masks,src_logits, num_masks_per_class):
     src_average_masks = torch.einsum('bhw,b->bhw', src_masks, src_logits)
     src_average_masks = src_average_masks.reshape(-1,num_masks_per_class, H, W)
     # print('src_average_masks', src_average_masks.shape)
-    src_average_masks = src_average_masks.mean(dim=1)
+    src_average_masks = src_average_masks.sum(dim=1)
     return src_average_masks
     
 #TODO Calculate uncertain mask
