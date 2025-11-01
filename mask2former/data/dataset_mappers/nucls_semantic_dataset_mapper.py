@@ -181,7 +181,8 @@ class NuCLSSemSegDatasetMapper:
                 # Some image does not have annotation (all ignored)
                 instances.gt_masks = torch.zeros((0, sem_seg_gt.shape[-2], sem_seg_gt.shape[-1]))
                 instances.mean_intensity_images = torch.zeros((0, sem_seg_gt.shape[-2], sem_seg_gt.shape[-1]))
-                
+                instances.classes_intensity = torch.zeros((0, sem_seg_gt.shape[-2], sem_seg_gt.shape[-1]))
+                instances.background_intensity = torch.zeros((0, sem_seg_gt.shape[-2], sem_seg_gt.shape[-1]))
             else:
                 masks = BitMasks(
                     torch.stack([torch.from_numpy(np.ascontiguousarray(x.copy())) for x in masks])

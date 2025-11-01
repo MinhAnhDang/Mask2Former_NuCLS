@@ -4,7 +4,7 @@ export DETECTRON2_DATASETS=".."
 ngpus=$(nvidia-smi --list-gpus | wc -l)
 
 cfg_file=configs/nucls/maskformer2_R50_bs16_160k.yaml
-base=results
+base=results/fixedmatched_uncertain_with_focal_loss
 
 base_lr=0.0001
 iter=160000
