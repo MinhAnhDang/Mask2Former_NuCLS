@@ -229,7 +229,7 @@ class SetCriterion(nn.Module):
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[-1] = self.eos_coef
         self.register_buffer("empty_weight", empty_weight)
-        self.register_buffer("class_weights", torch.Tensor([ 1.48891129,  1.46382557,  1.75833333, 39.91891892]), False)
+        self.register_buffer("class_weights", torch.Tensor([ 1.48891129,  1.46382557,  1.75833333, 39.91891892, 1.]), False)
         
         # pointwise mask loss parameters
         self.num_points = num_points

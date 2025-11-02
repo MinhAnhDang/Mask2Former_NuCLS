@@ -87,6 +87,7 @@ def refine_targets(src_masks: torch.Tensor,
     
 class FalseCorrector(nn.Module):
     def __init__(self, num_masks_per_class, theta, threshold_uc, low_bound, high_bound):
+        super().__init__()
         self.num_masks_per_class = num_masks_per_class
         self.theta = theta
         self.threshold_uc = threshold_uc

@@ -246,15 +246,17 @@ class MaskFormer(nn.Module):
                     segments_info (list[dict]): Describe each segment in `panoptic_seg`.
                         Each dict contains keys "id", "category_id", "isthing".
         """
-        has_class_3 = False
-        for x in batched_inputs:
-            if 3 in x['instances'].gt_classes:
-                has_class_3 = True
-                break
-        if not has_class_3 and len(self.cache) > 0:           
-            class_3_image = self.cache[random.randint(0, len(self.cache))]
-            #Replace last input with class 3 input    
-            batched_inputs[-1] = class_3_image    
+        if self.training:
+            has_class_3 = False
+            for x in batched_inputs:
+                # print(x)
+                if 3 in x["instances"].gt_classes:
+                    has_class_3 = True
+                    break
+            if not has_class_3 and len(self.cache) > 0:           
+                class_3_image = self.cache[random.randint(0, len(self.cache)-1)]
+                #Replace last input with class 3 input    
+                batched_inputs[-1] = class_3_image    
         images = [x["image"].to(self.device) for x in batched_inputs]      
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
         images = ImageList.from_tensors(images, self.size_divisibility)
