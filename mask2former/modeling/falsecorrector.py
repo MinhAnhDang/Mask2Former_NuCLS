@@ -69,19 +69,22 @@ def refine_uncertain_mask(src_average_masks:torch.Tensor,
 def refine_targets(src_masks: torch.Tensor,
                    targets: torch.Tensor,
                    final_masks: torch.Tensor):
-    pseudo_groundtruth = torch.logical_and(targets, final_masks)
+    pseudo_groundtruth = torch.logical_and(targets, final_masks)    
     ignore_region = pseudo_groundtruth != targets
+    original_area = targets.flatten(1).sum(dim=-1)
+    ignore_area = ignore_region.flatten(1).sum(dim=-1)
+    ignore_ratio = ignore_area/original_area
+    ignore_region[(ignore_region) > 0.8] = 0
     #Modify src_masks in ingnore_region, edit logit to 10e-7 to ignore loss
     src_masks = F.interpolate(src_masks.float().unsqueeze(0),
-                              size=(targets.shape[-2], targets.shape[-1]),
-                              mode="bilinear",
-                              align_corners=False,).squeeze(0)
+                            size=(targets.shape[-2], targets.shape[-1]),
+                            mode="bilinear",
+                            align_corners=False,).squeeze(0)
     src_masks[ignore_region] = 10e-7
-    
+    pseudo_groundtruth[(ignore_region) > 0.8] = targets[(ignore_region) > 0.8]
     return src_masks, pseudo_groundtruth.float()
     
     
-
 class FalseCorrector(nn.Module):
     def __init__(self, num_masks_per_class, theta, threshold_uc, low_bound, high_bound):
         self.num_masks_per_class = num_masks_per_class
@@ -90,10 +93,7 @@ class FalseCorrector(nn.Module):
         self.low_bound = low_bound
         self.high_bound = high_bound
     
-    
-    @classmethod
     def calculate_average_mask(self, src_masks,src_logits):
-        src_masks = src_masks.sigmoid()#BX, H,W
         _,H,W = src_masks.shape
         src_average_masks = torch.einsum('bhw,b->bhw', src_masks, src_logits)
         src_average_masks = src_average_masks.reshape(-1,self.num_masks_per_class, H, W)
@@ -110,23 +110,22 @@ class FalseCorrector(nn.Module):
         uncertain_masks = src_average_masks > threshold[:,None,None]
         return uncertain_masks
     
-    def refine_uncertain_mask(original_mask:torch.Tensor, 
-                          uncertain_mask, 
-                          mean_intensity_image: torch.Tensor, 
-                          class_intensity: torch.Tensor, #BX
-                          low_bound,
-                          high_bound):#1
+    def refine_uncertain_mask(self,original_mask:torch.Tensor, 
+                            uncertain_mask, 
+                            mean_intensity_image: torch.Tensor, 
+                            class_intensity: torch.Tensor, #BX
+                            ):#1
         # ========== FN correction ==========
         inverse_binary_masks = 1 - original_mask
-        FN_UH = uncertain_mask * inverse_binary_masks #BX, H, W
+        FN_UH = uncertain_mask * inverse_binary_masks # H, W
         FN_UH = FN_UH*mean_intensity_image
         # print('Class_intensity', class_intensity.shape)
         # print('FN_UH', FN_UH.shape)
-        FN_correction = torch.logical_and((class_intensity*low_bound < FN_UH), (FN_UH > class_intensity*high_bound))       
+        FN_correction = torch.logical_and((class_intensity* self.low_bound < FN_UH), (FN_UH > class_intensity*self.high_bound))       
         # ========== FP correction ==========
         FP_UH = original_mask * uncertain_mask
         FP_UH = FP_UH*mean_intensity_image
-        FP_correction = torch.logical_and((class_intensity*low_bound > FP_UH), (FP_UH > class_intensity*high_bound) )
+        FP_correction = torch.logical_and((class_intensity* self.low_bound > FP_UH), (FP_UH > class_intensity*self.high_bound) )
         #Final mask
         final_masks = torch.logical_or(original_mask, FN_correction)
         final_masks = torch.logical_and(final_masks, torch.logical_not(FP_correction))

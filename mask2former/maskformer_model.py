@@ -15,7 +15,7 @@ from detectron2.utils.memory import retry_if_cuda_oom
 
 from .modeling.criterion import SetCriterion, FixedSetCriterion, SetCriterionWithUncertain
 from .modeling.matcher import HungarianMatcher,FixedMatcher
-
+from .modeling.falsecorrector import FalseCorrector
 
 @META_ARCH_REGISTRY.register()
 class MaskFormer(nn.Module):
@@ -30,6 +30,7 @@ class MaskFormer(nn.Module):
         backbone: Backbone,
         sem_seg_head: nn.Module,
         criterion: nn.Module,
+        falsecorrector: nn.Module,
         num_queries: int,
         object_mask_threshold: float,
         overlap_threshold: float,
@@ -72,6 +73,7 @@ class MaskFormer(nn.Module):
         self.backbone = backbone
         self.sem_seg_head = sem_seg_head
         self.criterion = criterion
+        self.falsecorrector = falsecorrector
         self.num_queries = num_queries
         self.overlap_threshold = overlap_threshold
         self.object_mask_threshold = object_mask_threshold
@@ -184,11 +186,17 @@ class MaskFormer(nn.Module):
                     low_bound=cfg.MODEL.MASK_FORMER.LOW_BOUND,
                     high_bound=cfg.MODEL.MASK_FORMER.HIGH_BOUND,
                 )
-
+        num_masks_per_class = int(cfg.MODEL.MASK_FORMER.NUM_OBJECT_QUERIES/sem_seg_head.num_classes)
+        falsecorrector = FalseCorrector(num_masks_per_class=num_masks_per_class,
+                                        theta=cfg.MODEL.MASK_FORMER.THETA, 
+                                        threshold_uc=cfg.MODEL.MASK_FORMER.THRESHOLD_UC,
+                                        low_bound=cfg.MODEL.MASK_FORMER.LOW_BOUND,
+                                        high_bound=cfg.MODEL.MASK_FORMER.HIGH_BOUND)
         return {
             "backbone": backbone,
             "sem_seg_head": sem_seg_head,
             "criterion": criterion,
+            "falsecorrector":falsecorrector,
             "num_queries": cfg.MODEL.MASK_FORMER.NUM_OBJECT_QUERIES,
             "object_mask_threshold": cfg.MODEL.MASK_FORMER.TEST.OBJECT_MASK_THRESHOLD,
             "overlap_threshold": cfg.MODEL.MASK_FORMER.TEST.OVERLAP_THRESHOLD,
@@ -245,8 +253,8 @@ class MaskFormer(nn.Module):
                 break
         if not has_class_3 and len(self.cache) > 0:           
             class_3_image = self.cache[random.randint(0, len(self.cache))]
-        #Replace last input with class 3 input    
-        batched_inputs[-1] = class_3_image    
+            #Replace last input with class 3 input    
+            batched_inputs[-1] = class_3_image    
         images = [x["image"].to(self.device) for x in batched_inputs]      
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
         images = ImageList.from_tensors(images, self.size_divisibility)
@@ -384,7 +392,49 @@ class MaskFormer(nn.Module):
                     semseg[mask] = pred_class
             semseg = F.one_hot(semseg, self.sem_seg_head.num_classes+1).float().permute(2, 0, 1) #num_classes+1, H, W
         return semseg     
-
+    
+    def semantic_inference3(self, mask_cls, mask_pred, batch_inputs):
+        mask_pred = mask_pred.sigmoid()
+        mask_cls = mask_cls.sigmoid()
+        h,w = mask_pred.shape[-2:]
+        avg_mask = self.falsecorrector.calculate_average_mask(mask_pred,mask_cls)
+        uncertain_masks = self.falsecorrector.calculate_uncertain_mask(avg_mask)
+        num_queries_per_class = int(mask_pred.shape[0]/self.sem_seg_head.num_classes)
+        batch_idx = torch.arange(0, mask_pred.shape[0])
+        class_idx = torch.arange(0, self.sem_seg_head.num_classes).unsqueeze(1).repeat(1,num_queries_per_class).view(-1)
+        scores = mask_cls[batch_idx, class_idx]
+        labels = class_idx
+        keep = scores > self.object_mask_threshold
+        cur_scores = scores[keep]
+        cur_classes = labels[keep]
+        cur_masks = mask_pred[keep]
+        cur_prob_masks = cur_scores.view(-1, 1, 1) * cur_masks
+        image = batch_inputs['image']
+        mean_intensity_image = image.mean(0)
+        semseg = torch.full((h,w),  self.sem_seg_head.num_classes, dtype=torch.long, device=cur_masks.device)
+        if cur_masks.shape[0] == 0:
+            #We didnt't detect any mask
+            semseg = F.one_hot(semseg, self.sem_seg_head.num_classes+1).float().permute(2,0,1) #label num_classes = no_object
+        else:
+            #take argmax       
+            cur_masks_ids = cur_prob_masks.argmax(0)
+            for k in range(cur_masks.shape[0]):
+                pred_class = cur_classes[k].item()
+                mask = (cur_masks_ids == k)
+                original_mask = cur_masks[k] >= self.mask_threshold
+                class_intensity = mean_intensity_image[original_mask].mean()
+                uncertain_mask = uncertain_masks[pred_class]
+                refine_original_mask = self.falsecorrector.refine_uncertain_mask(original_mask,uncertain_mask,mean_intensity_image,class_intensity)
+                mask_area = mask.sum().item()
+                original_area = refine_original_mask.sum().item()
+                mask = mask & refine_original_mask
+                if mask_area>0 and original_area>0 and mask.sum().item():
+                    if mask_area/original_area < self.object_mask_threshold:
+                        continue
+                    semseg[mask] = pred_class
+            semseg = F.one_hot(semseg, self.sem_seg_head.num_classes+1).float().permute(2,0,1)
+        return semseg
+                                    
     def panoptic_inference(self, mask_cls, mask_pred):
         scores, labels = F.softmax(mask_cls, dim=-1).max(-1)
         mask_pred = mask_pred.sigmoid()
