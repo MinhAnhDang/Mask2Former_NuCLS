@@ -1,6 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 from typing import Tuple
-
+import random
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -84,7 +84,7 @@ class MaskFormer(nn.Module):
         self.sem_seg_postprocess_before_inference = sem_seg_postprocess_before_inference
         self.register_buffer("pixel_mean", torch.Tensor(pixel_mean).view(-1, 1, 1), False)
         self.register_buffer("pixel_std", torch.Tensor(pixel_std).view(-1, 1, 1), False)
-
+        self.cache = []
         # additional args
         self.semantic_on = semantic_on
         self.instance_on = instance_on
@@ -238,7 +238,16 @@ class MaskFormer(nn.Module):
                     segments_info (list[dict]): Describe each segment in `panoptic_seg`.
                         Each dict contains keys "id", "category_id", "isthing".
         """
-        images = [x["image"].to(self.device) for x in batched_inputs]
+        has_class_3 = False
+        for x in batched_inputs:
+            if 3 in x['instances'].gt_classes:
+                has_class_3 = True
+                break
+        if not has_class_3 and len(self.cache) > 0:           
+            class_3_image = self.cache[random.randint(0, len(self.cache))]
+        #Replace last input with class 3 input    
+        batched_inputs[-1] = class_3_image    
+        images = [x["image"].to(self.device) for x in batched_inputs]      
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
         images = ImageList.from_tensors(images, self.size_divisibility)
 
@@ -250,6 +259,11 @@ class MaskFormer(nn.Module):
             if "instances" in batched_inputs[0]:
                 gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
                 targets = self.prepare_targets(gt_instances, images)
+                
+                #Update cache to add data of class 3 if has
+                for x in batched_inputs:
+                    if 3 in x['instances'].gt_classes:
+                        self.cache.append(x)
             else:
                 targets = None
 
@@ -306,7 +320,8 @@ class MaskFormer(nn.Module):
                 if self.instance_on:
                     instance_r = retry_if_cuda_oom(self.instance_inference)(mask_cls_result, mask_pred_result)
                     processed_results[-1]["instances"] = instance_r
-
+            
+            
             return processed_results
 
     def prepare_targets(self, targets, images):

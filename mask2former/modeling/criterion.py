@@ -18,8 +18,8 @@ from detectron2.projects.point_rend.point_features import (
 from ..utils.misc import is_dist_avail_and_initialized, nested_tensor_from_tensor_list
 from .falsecorrector import calculate_average_mask, calculate_uncertain_mask, refine_uncertain_mask, refine_targets
 
-def focal_loss(inputs, targets, num_masks, alpha=10, gamma=2, reduction='mean', ignore_index=255, ):
-    ce_loss = F.cross_entropy(inputs, targets, reduction='none', ignore_index=ignore_index)
+def focal_loss(inputs, targets, num_masks, alpha=10, gamma=2, reduction='mean', ignore_index=255,weight=None):
+    ce_loss = F.cross_entropy(inputs, targets, reduction='none', ignore_index=ignore_index, weight=weight)
     pt = torch.exp(-ce_loss)
     f_loss = alpha * (1-pt)**gamma * ce_loss
     if reduction == 'mean':
@@ -141,6 +141,7 @@ def sigmoid_ce_loss(
         inputs: torch.Tensor,
         targets: torch.Tensor,
         num_masks: float,
+        weight=None,
     ):
     """
     Args:
@@ -152,7 +153,7 @@ def sigmoid_ce_loss(
     Returns:
         Loss tensor
     """
-    loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+    loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none", weight=weight)
 
     return loss.mean(1).sum() / num_masks
 
@@ -228,7 +229,8 @@ class SetCriterion(nn.Module):
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[-1] = self.eos_coef
         self.register_buffer("empty_weight", empty_weight)
-
+        self.register_buffer("class_weights", torch.Tensor([ 1.48891129,  1.46382557,  1.75833333, 39.91891892]), False)
+        
         # pointwise mask loss parameters
         self.num_points = num_points
         self.oversample_ratio = oversample_ratio
@@ -251,9 +253,9 @@ class SetCriterion(nn.Module):
         )
         target_classes[idx] = target_classes_o
         if self.focal:
-            loss_ce = focal_loss(src_logits.transpose(1,2), target_classes, num_masks=num_masks, gamma=self.focal_gamma, alpha=self.focal_alpha)
+            loss_ce = focal_loss(src_logits.transpose(1,2), target_classes, num_masks=num_masks, gamma=self.focal_gamma, alpha=self.focal_alpha, weight=self.class_weights)
         else:
-            loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight)
+            loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.class_weights)
         losses = {"loss_ce": loss_ce}
         return losses
     
@@ -398,9 +400,9 @@ class FixedSetCriterion(SetCriterion):
         target_classes[src_idx] = target_classes_o
         
         if self.focal:
-            loss_ce = focal_loss(src_logits.transpose(1,2), target_classes, num_masks=num_masks, gamma=self.focal_gamma, alpha=self.focal_alpha)
+            loss_ce = focal_loss(src_logits.transpose(1,2), target_classes, num_masks=num_masks, gamma=self.focal_gamma, alpha=self.focal_alpha, weight=self.class_weights)
         else:
-            loss_ce = F.cross_entropy(src_logits.transpose(1,2), target_classes, self.empty_weight)
+            loss_ce = F.cross_entropy(src_logits.transpose(1,2), target_classes, self.class_weights)
         losses = {"loss_ce": loss_ce}
         return losses
     
@@ -503,9 +505,9 @@ class SetCriterionWithUncertain(SetCriterion):
         target_classes[src_idx] = target_classes_o
         
         if self.focal:
-            loss_ce = focal_loss(src_logits.transpose(1,2), target_classes, num_masks=num_masks, gamma=self.focal_gamma, alpha=self.focal_alpha)
+            loss_ce = focal_loss(src_logits.transpose(1,2), target_classes, num_masks=num_masks, gamma=self.focal_gamma, alpha=self.focal_alpha, weight=self.class_weights)
         else:
-            loss_ce = F.cross_entropy(src_logits.transpose(1,2), target_classes, self.empty_weight)
+            loss_ce = F.cross_entropy(src_logits.transpose(1,2), target_classes, self.class_weights)
         losses = {"loss_ce": loss_ce}
         return losses
     
