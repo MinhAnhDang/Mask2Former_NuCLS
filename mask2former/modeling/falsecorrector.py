@@ -36,7 +36,8 @@ def refine_uncertain_mask(src_average_masks:torch.Tensor,
     src_average_flatten = src_average_masks.flatten(start_dim=1)
     min_value = torch.min(src_average_flatten, dim=1).values
     max_value = torch.max(src_average_flatten, dim=1).values
-    threshold = torch.as_tensor(min_value + 0.5*(max_value-min_value))
+    # threshold = torch.as_tensor(min_value + 0.5*(max_value-min_value))
+    threshold = torch.as_tensor([0.5]).to(src_average_masks.device)
     binary_masks = torch.where(src_average_masks > threshold[:,None,None], 1, 0)
     binary_masks = binary_masks.unsqueeze(0)
     binary_masks = F.interpolate(binary_masks.float(),

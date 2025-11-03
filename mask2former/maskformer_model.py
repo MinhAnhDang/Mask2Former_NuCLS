@@ -40,6 +40,7 @@ class MaskFormer(nn.Module):
         pixel_mean: Tuple[float],
         pixel_std: Tuple[float],
         uncertain: bool,
+        memory: bool,
         # inference
         semantic_on: bool,
         panoptic_on: bool,
@@ -89,6 +90,7 @@ class MaskFormer(nn.Module):
         self.register_buffer("pixel_std", torch.Tensor(pixel_std).view(-1, 1, 1), False)
         self.cache = []
         self.uncertain = uncertain
+        self.memory = memory
         # additional args
         self.semantic_on = semantic_on
         self.instance_on = instance_on
@@ -212,6 +214,7 @@ class MaskFormer(nn.Module):
             "pixel_mean": cfg.MODEL.PIXEL_MEAN,
             "pixel_std": cfg.MODEL.PIXEL_STD,
             'uncertain': uncertain,
+            'memory': cfg.MODEL.MASK_FORMER.MEMORY,
             # inference
             "semantic_on": cfg.MODEL.MASK_FORMER.TEST.SEMANTIC_ON,
             "instance_on": cfg.MODEL.MASK_FORMER.TEST.INSTANCE_ON,
@@ -249,18 +252,16 @@ class MaskFormer(nn.Module):
                     segments_info (list[dict]): Describe each segment in `panoptic_seg`.
                         Each dict contains keys "id", "category_id", "isthing".
         """
-        if self.training:
+        if self.training and self.memory:
             has_class_3 = False
             for x in batched_inputs:
                 # print(x)
                 if 3 in x["instances"].gt_classes:
                     has_class_3 = True
                     #Update cache to add data of class 3 if has
-                    for x in batched_inputs:
-                        if 3 in x['instances'].gt_classes:
-                            self.cache.append(x)
-                            if len(self.cache) > 37:
-                                self.cache.pop(0)
+                    self.cache.append(x)
+                    if len(self.cache) > 37:
+                        self.cache.pop(0)
                     break
             if not has_class_3 and len(self.cache) > 0:           
                 class_3_image = self.cache[random.randint(0, len(self.cache)-1)]
@@ -329,7 +330,7 @@ class MaskFormer(nn.Module):
                             r = retry_if_cuda_oom(sem_seg_postprocess)(r, image_size, height, width)
                         processed_results[-1]["sem_seg"] = r
                     else:
-                        r = retry_if_cuda_oom(self.semantic_inference2)(mask_cls_result, mask_pred_result, batched_inputs)
+                        r = retry_if_cuda_oom(self.semantic_inference3)(mask_cls_result, mask_pred_result,batched_inputs)
                         if not self.sem_seg_postprocess_before_inference:
                             r = retry_if_cuda_oom(sem_seg_postprocess)(r, image_size, height, width)
                         processed_results[-1]["sem_seg"] = r
@@ -410,7 +411,7 @@ class MaskFormer(nn.Module):
     
     def semantic_inference3(self, mask_cls, mask_pred, batch_inputs):
         mask_pred = mask_pred.sigmoid()
-        mask_cls = mask_cls.sigmoid()
+        mask_cls = F.softmax(mask_cls, dim=-1)
         h,w = mask_pred.shape[-2:]
         
         num_queries_per_class = int(mask_pred.shape[0]/self.sem_seg_head.num_classes)

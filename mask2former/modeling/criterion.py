@@ -211,7 +211,7 @@ class SetCriterion(nn.Module):
 
     def __init__(self, num_classes, matcher, weight_dict, eos_coef, losses,
                  num_points, oversample_ratio, importance_sample_ratio, 
-                 focal=True, focal_gamma=2, focal_alpha=10):
+                 focal=True, focal_gamma=2, focal_alpha=10, use_weight=True):
         """Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -229,8 +229,11 @@ class SetCriterion(nn.Module):
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[-1] = self.eos_coef
         self.register_buffer("empty_weight", empty_weight)
-        self.register_buffer("class_weights", torch.Tensor([ 1.48891129,  1.46382557,  1.75833333, 39.91891892, 1.]), False)
-        
+        if use_weight:
+            self.register_buffer("class_weights", torch.Tensor([ 1.48891129,  1.46382557,  1.75833333, 39.91891892, self.eos_coef]))
+        else:
+            self.register_buffer("class_weights", empty_weight)
+          
         # pointwise mask loss parameters
         self.num_points = num_points
         self.oversample_ratio = oversample_ratio
@@ -543,15 +546,16 @@ class SetCriterionWithUncertain(SetCriterion):
         classes_intensity = torch.cat([x['classes_intensity'] for x in targets])
         background_intensity = torch.cat([x['background_intensity'] for x in targets])
 
-        final_masks = refine_uncertain_mask(average_masks, uncertain_masks, mean_intensity_images, classes_intensity,background_intensity, self.low_bound, self.high_bound)
+        # final_masks = refine_uncertain_mask(average_masks, uncertain_masks, mean_intensity_images, classes_intensity,background_intensity, self.low_bound, self.high_bound)
         
         #Refine target_masks
-        average_masks, target_masks = refine_targets(average_masks, target_masks, final_masks)
+        # average_masks, target_masks = refine_targets(average_masks, target_masks, final_masks)
         
         # No need to upsample predictions as we are using normalized coordinates :)
         # N x 1 x H x W
         average_masks = average_masks.clamp(min=10e-7, max=1.0 - 10e-7)
-        average_masks = torch.log(average_masks / (1.0 - average_masks))
+        # average_masks = torch.log(average_masks / (1.0 - average_masks))
+        average_masks = torch.logit(average_masks)
         src_masks = average_masks[:, None]
         target_masks = target_masks[:, None]
         with torch.no_grad():
