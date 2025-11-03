@@ -411,23 +411,19 @@ class MaskFormer(nn.Module):
     
     def semantic_inference3(self, mask_cls, mask_pred, batch_inputs):
         mask_pred = mask_pred.sigmoid()
-        mask_cls = F.softmax(mask_cls, dim=-1)
+        scores, labels = F.softmax(mask_cls, dim=-1).max(-1)
+        
         h,w = mask_pred.shape[-2:]
-        
-        num_queries_per_class = int(mask_pred.shape[0]/self.sem_seg_head.num_classes)
-        batch_idx = torch.arange(0, mask_pred.shape[0]).to(mask_cls.device)
-        class_idx = torch.arange(0, self.sem_seg_head.num_classes).unsqueeze(1).repeat(1,num_queries_per_class).view(-1).to(mask_cls.device)
-        scores = mask_cls[batch_idx, class_idx]
-        labels = class_idx
-        
-        avg_mask = self.falsecorrector.calculate_average_mask(mask_pred,scores)
-        uncertain_masks = self.falsecorrector.calculate_uncertain_mask(avg_mask)
-        
-        keep = scores > self.object_mask_threshold
+        keep = labels.ne(self.sem_seg_head.num_classes)&(scores > self.object_mask_threshold)
         cur_scores = scores[keep]
         cur_classes = labels[keep]
         cur_masks = mask_pred[keep]
-        cur_prob_masks = cur_scores.view(-1, 1, 1) * cur_masks
+        
+        cur_prob_masks = cur_scores.view(-1, 1,1) * cur_masks
+        
+        avg_mask = self.falsecorrector.calculate_average_mask(mask_pred,scores)
+        uncertain_masks = self.falsecorrector.calculate_uncertain_mask(avg_mask)
+
         image = batch_inputs[0]['image'].to(mask_cls.device)
         image = F.interpolate(image.unsqueeze(0).float(),
                               size=(mask_pred.shape[-2], mask_pred.shape[-1]),
