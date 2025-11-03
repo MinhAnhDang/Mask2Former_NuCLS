@@ -42,8 +42,8 @@ def add_maskformer2_config(cfg):
     cfg.MODEL.MASK_FORMER.FOCAL = False
     cfg.MODEL.MASK_FORMER.FOCAL_ALPHA = 5.
     cfg.MODEL.MASK_FORMER.FOCAL_GAMMA = 1.
-    cfg.MODEL.MASK_FORMER.MEMORY = False,
-    cfg.MODEL.MASK_FORMER.USE_WEIGHTS=False,
+    cfg.MODEL.MASK_FORMER.MEMORY = False
+    cfg.MODEL.MASK_FORMER.USE_WEIGHTS=False
     
     # uncertain
     cfg.MODEL.MASK_FORMER.UNCERTAIN = True
