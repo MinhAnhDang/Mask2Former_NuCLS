@@ -18,8 +18,8 @@ MODEL:
   MASK_FORMER:
     TRANSFORMER_DECODER_NAME: "MultiScaleMaskedTransformerDecoder" #StandardTransformerDecoder MultiScaleMaskedTransformerDecoder
     TRANSFORMER_IN_FEATURE: "multi_scale_pixel_decoder"
-    FIXEDMATCH: True
-    FOCAL: True
+    FIXEDMATCH: False
+    FOCAL: False
     FOCAL_ALPHA: 5.
     FOCAL_GAMMA: 1.
     UNCERTAIN: True
@@ -52,4 +52,4 @@ MODEL:
       OVERLAP_THRESHOLD: 0.8
       OBJECT_MASK_THRESHOLD: 0.8
       MASKS_BG: False
-      # SEM_SEG_POSTPROCESSING_BEFORE_INFERENCE: True
+      SEM_SEG_POSTPROCESSING_BEFORE_INFERENCE: True

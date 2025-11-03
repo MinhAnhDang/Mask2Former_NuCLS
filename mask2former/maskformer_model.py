@@ -39,6 +39,7 @@ class MaskFormer(nn.Module):
         sem_seg_postprocess_before_inference: bool,
         pixel_mean: Tuple[float],
         pixel_std: Tuple[float],
+        uncertain: bool,
         # inference
         semantic_on: bool,
         panoptic_on: bool,
@@ -87,6 +88,7 @@ class MaskFormer(nn.Module):
         self.register_buffer("pixel_mean", torch.Tensor(pixel_mean).view(-1, 1, 1), False)
         self.register_buffer("pixel_std", torch.Tensor(pixel_std).view(-1, 1, 1), False)
         self.cache = []
+        self.uncertain = uncertain
         # additional args
         self.semantic_on = semantic_on
         self.instance_on = instance_on
@@ -209,6 +211,7 @@ class MaskFormer(nn.Module):
             ),
             "pixel_mean": cfg.MODEL.PIXEL_MEAN,
             "pixel_std": cfg.MODEL.PIXEL_STD,
+            'uncertain': uncertain,
             # inference
             "semantic_on": cfg.MODEL.MASK_FORMER.TEST.SEMANTIC_ON,
             "instance_on": cfg.MODEL.MASK_FORMER.TEST.INSTANCE_ON,
@@ -252,11 +255,19 @@ class MaskFormer(nn.Module):
                 # print(x)
                 if 3 in x["instances"].gt_classes:
                     has_class_3 = True
+                    #Update cache to add data of class 3 if has
+                    for x in batched_inputs:
+                        if 3 in x['instances'].gt_classes:
+                            self.cache.append(x)
+                            if len(self.cache) > 37:
+                                self.cache.pop(0)
                     break
             if not has_class_3 and len(self.cache) > 0:           
                 class_3_image = self.cache[random.randint(0, len(self.cache)-1)]
                 #Replace last input with class 3 input    
-                batched_inputs[-1] = class_3_image    
+                batched_inputs[-1] = class_3_image
+                # print(f"Replace image of class 3 from cache. Number of cache image {len(self.cache)}")  
+                  
         images = [x["image"].to(self.device) for x in batched_inputs]      
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
         images = ImageList.from_tensors(images, self.size_divisibility)
@@ -269,11 +280,7 @@ class MaskFormer(nn.Module):
             if "instances" in batched_inputs[0]:
                 gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
                 targets = self.prepare_targets(gt_instances, images)
-                
-                #Update cache to add data of class 3 if has
-                for x in batched_inputs:
-                    if 3 in x['instances'].gt_classes:
-                        self.cache.append(x)
+            
             else:
                 targets = None
 
@@ -316,10 +323,16 @@ class MaskFormer(nn.Module):
 
                 # semantic segmentation inference
                 if self.semantic_on:
-                    r = retry_if_cuda_oom(self.semantic_inference2)(mask_cls_result, mask_pred_result)
-                    if not self.sem_seg_postprocess_before_inference:
-                        r = retry_if_cuda_oom(sem_seg_postprocess)(r, image_size, height, width)
-                    processed_results[-1]["sem_seg"] = r
+                    if not self.uncertain:
+                        r = retry_if_cuda_oom(self.semantic_inference2)(mask_cls_result, mask_pred_result)
+                        if not self.sem_seg_postprocess_before_inference:
+                            r = retry_if_cuda_oom(sem_seg_postprocess)(r, image_size, height, width)
+                        processed_results[-1]["sem_seg"] = r
+                    else:
+                        r = retry_if_cuda_oom(self.semantic_inference2)(mask_cls_result, mask_pred_result, batched_inputs)
+                        if not self.sem_seg_postprocess_before_inference:
+                            r = retry_if_cuda_oom(sem_seg_postprocess)(r, image_size, height, width)
+                        processed_results[-1]["sem_seg"] = r
 
                 # panoptic segmentation inference
                 if self.panoptic_on:
@@ -399,20 +412,27 @@ class MaskFormer(nn.Module):
         mask_pred = mask_pred.sigmoid()
         mask_cls = mask_cls.sigmoid()
         h,w = mask_pred.shape[-2:]
-        avg_mask = self.falsecorrector.calculate_average_mask(mask_pred,mask_cls)
-        uncertain_masks = self.falsecorrector.calculate_uncertain_mask(avg_mask)
+        
         num_queries_per_class = int(mask_pred.shape[0]/self.sem_seg_head.num_classes)
-        batch_idx = torch.arange(0, mask_pred.shape[0])
-        class_idx = torch.arange(0, self.sem_seg_head.num_classes).unsqueeze(1).repeat(1,num_queries_per_class).view(-1)
+        batch_idx = torch.arange(0, mask_pred.shape[0]).to(mask_cls.device)
+        class_idx = torch.arange(0, self.sem_seg_head.num_classes).unsqueeze(1).repeat(1,num_queries_per_class).view(-1).to(mask_cls.device)
         scores = mask_cls[batch_idx, class_idx]
         labels = class_idx
+        
+        avg_mask = self.falsecorrector.calculate_average_mask(mask_pred,scores)
+        uncertain_masks = self.falsecorrector.calculate_uncertain_mask(avg_mask)
+        
         keep = scores > self.object_mask_threshold
         cur_scores = scores[keep]
         cur_classes = labels[keep]
         cur_masks = mask_pred[keep]
         cur_prob_masks = cur_scores.view(-1, 1, 1) * cur_masks
-        image = batch_inputs['image']
-        mean_intensity_image = image.mean(0)
+        image = batch_inputs[0]['image'].to(mask_cls.device)
+        image = F.interpolate(image.unsqueeze(0).float(),
+                              size=(mask_pred.shape[-2], mask_pred.shape[-1]),
+                              mode="bilinear",
+                              align_corners=False).squeeze(0)
+        mean_intensity_image = image.mean(0, dtype=torch.float)
         semseg = torch.full((h,w),  self.sem_seg_head.num_classes, dtype=torch.long, device=cur_masks.device)
         if cur_masks.shape[0] == 0:
             #We didnt't detect any mask

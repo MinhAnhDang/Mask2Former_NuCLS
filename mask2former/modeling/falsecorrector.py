@@ -69,19 +69,19 @@ def refine_uncertain_mask(src_average_masks:torch.Tensor,
 def refine_targets(src_masks: torch.Tensor,
                    targets: torch.Tensor,
                    final_masks: torch.Tensor):
-    pseudo_groundtruth = torch.logical_and(targets, final_masks)    
+    pseudo_groundtruth = torch.logical_and(targets, final_masks).to(targets.dtype)    
     ignore_region = pseudo_groundtruth != targets
     original_area = targets.flatten(1).sum(dim=-1)
     ignore_area = ignore_region.flatten(1).sum(dim=-1)
     ignore_ratio = ignore_area/original_area
-    ignore_region[(ignore_region) > 0.8] = 0
+    ignore_region[ignore_ratio > 0.4] = 0
     #Modify src_masks in ingnore_region, edit logit to 10e-7 to ignore loss
     src_masks = F.interpolate(src_masks.float().unsqueeze(0),
                             size=(targets.shape[-2], targets.shape[-1]),
                             mode="bilinear",
                             align_corners=False,).squeeze(0)
     src_masks[ignore_region] = 10e-7
-    pseudo_groundtruth[(ignore_region) > 0.8] = targets[(ignore_region) > 0.8]
+    pseudo_groundtruth[ignore_ratio > 0.4] = targets[ignore_ratio > 0.4]
     return src_masks, pseudo_groundtruth.float()
     
     
@@ -117,7 +117,7 @@ class FalseCorrector(nn.Module):
                             class_intensity: torch.Tensor, #BX
                             ):#1
         # ========== FN correction ==========
-        inverse_binary_masks = 1 - original_mask
+        inverse_binary_masks = 1 - original_mask.to(torch.int)
         FN_UH = uncertain_mask * inverse_binary_masks # H, W
         FN_UH = FN_UH*mean_intensity_image
         # print('Class_intensity', class_intensity.shape)

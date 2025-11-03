@@ -546,7 +546,7 @@ class SetCriterionWithUncertain(SetCriterion):
         final_masks = refine_uncertain_mask(average_masks, uncertain_masks, mean_intensity_images, classes_intensity,background_intensity, self.low_bound, self.high_bound)
         
         #Refine target_masks
-        # average_masks, target_masks = refine_targets(average_masks, target_masks, final_masks)
+        average_masks, target_masks = refine_targets(average_masks, target_masks, final_masks)
         
         # No need to upsample predictions as we are using normalized coordinates :)
         # N x 1 x H x W
